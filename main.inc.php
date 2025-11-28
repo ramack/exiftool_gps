@@ -17,8 +17,13 @@ add_event_handler('format_exif_data', 'eg_format_exif_data', EVENT_HANDLER_PRIOR
 function eg_format_exif_data($exif, $filepath, $map)
 {
 
-  $output = shell_exec('exiftool -json "'.$filepath.'"');
-  $metadata = json_decode($output, true);
+  $json_string = shell_exec('exiftool -json "'.$filepath.'"');
+  /* Correctif suggéré Mistral 28/11/2025 */
+  if ($json_string === null)
+  {
+    $json_string = '{}'; // ou une valeur par défaut appropriée
+  }
+  $metadata = json_decode($json_string, true);
 
   foreach ($metadata as $key => $section) {
     foreach ($section as $name => $val) {
