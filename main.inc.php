@@ -1,7 +1,7 @@
 <?php
 /*
 Plugin Name: Exiftool GPS
-Version: 0.7
+Version: 0.8
 Description: Uses command line exiftool to read exif GPS data. (Plugin based on Exiftool Keywords.)
 Plugin URI: http://piwigo.org/ext/extension_view.php?eid=850
 Author: ramack, plg
