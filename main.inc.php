@@ -13,10 +13,100 @@ if (!defined('PHPWG_ROOT_PATH'))
   die('Hacking attempt!');
 }
 
+/**
+ * Parses a GPS coordinate string in DMS, DM, or decimal formats
+ * and returns an array of three rational strings (degrees, minutes, seconds)
+ * compatible with Piwigo/EXIF standards, or null on failure.
+ *
+ * @param mixed $val
+ * @return array|null
+ */
+function eg_parse_coordinate($val)
+{
+  if (!is_string($val) && !is_numeric($val)) {
+    return null;
+  }
+
+  $val = trim((string)$val);
+  if ($val === '') {
+    return null;
+  }
+
+  // Normalize spaces
+  $val = preg_replace('/\s+/u', ' ', $val);
+
+  // Normalize degree symbols
+  $normalized = str_ireplace(array('deg', '°', 'o', 'd.'), 'd', $val);
+
+  // Normalize minute symbols
+  $normalized = str_ireplace(array('’', '′', 'min', '\''), 'm', $normalized);
+
+  // Normalize second symbols
+  $normalized = str_ireplace(array('”', '″', 'sec', 's', "''", '"'), 's', $normalized);
+
+  // 1. DMS (Degrees, Minutes, Seconds) - e.g., 46 d 32 m 35.54 s
+  if (preg_match('/(\d+(?:\.\d+)?)\s*d\s*(\d+(?:\.\d+)?)\s*m\s*(\d+(?:\.\d+)?)\s*s/i', $normalized, $matches)) {
+    $degrees = floatval($matches[1]);
+    $minutes = floatval($matches[2]);
+    $seconds = floatval($matches[3]);
+
+    return array(
+      intval($degrees) . "/1",
+      intval($minutes) . "/1",
+      intval(round($seconds * 10000)) . "/10000"
+    );
+  }
+
+  // 2. DM (Degrees, Minutes) - e.g., 46 d 32.5923 m
+  if (preg_match('/(\d+(?:\.\d+)?)\s*d\s*(\d+(?:\.\d+)?)\s*m/i', $normalized, $matches)) {
+    $degrees = floatval($matches[1]);
+    $minutes_decimal = floatval($matches[2]);
+    $minutes = floor($minutes_decimal);
+    $seconds = ($minutes_decimal - $minutes) * 60;
+
+    return array(
+      intval($degrees) . "/1",
+      intval($minutes) . "/1",
+      intval(round($seconds * 10000)) . "/10000"
+    );
+  }
+
+  // 3. Degrees only with 'd' suffix - e.g., 46.54321 d
+  if (preg_match('/(\d+(?:\.\d+)?)\s*d/i', $normalized, $matches)) {
+    $decimal = floatval($matches[1]);
+    $degrees = floor($decimal);
+    $minutes_decimal = ($decimal - $degrees) * 60;
+    $minutes = floor($minutes_decimal);
+    $seconds = ($minutes_decimal - $minutes) * 60;
+
+    return array(
+      intval($degrees) . "/1",
+      intval($minutes) . "/1",
+      intval(round($seconds * 10000)) . "/10000"
+    );
+  }
+
+  // 4. Pure Decimal - e.g., -46.54321 or 46.54321 N
+  if (preg_match('/[-+]?\d+(?:\.\d+)?/', $normalized, $matches)) {
+    $decimal = abs(floatval($matches[0]));
+    $degrees = floor($decimal);
+    $minutes_decimal = ($decimal - $degrees) * 60;
+    $minutes = floor($minutes_decimal);
+    $seconds = ($minutes_decimal - $minutes) * 60;
+
+    return array(
+      intval($degrees) . "/1",
+      intval($minutes) . "/1",
+      intval(round($seconds * 10000)) . "/10000"
+    );
+  }
+
+  return null;
+}
+
 add_event_handler('format_exif_data', 'eg_format_exif_data', EVENT_HANDLER_PRIORITY_NEUTRAL, 3);
 function eg_format_exif_data($exif, $filepath, $map)
 {
-
   $json_string = shell_exec('exiftool -json "'.$filepath.'"');
   /* Correctif suggéré Mistral 28/11/2025 */
   if ($json_string === null)
@@ -25,31 +115,37 @@ function eg_format_exif_data($exif, $filepath, $map)
   }
   $metadata = json_decode($json_string, true);
 
+  if (!is_array($metadata))
+  {
+    return $exif;
+  }
+
   foreach ($metadata as $key => $section) {
+    if (!is_array($section)) {
+      continue;
+    }
     foreach ($section as $name => $val) {
-      if(substr( $name, 0, 3 ) === "GPS")
+      if (is_string($name) && substr($name, 0, 3) === "GPS")
       {
-        if($name === "GPSLatitude" or $name === "GPSLongitude")
-	{
-          /* convert to x/1 y/1 z/... format */
-          $p1 = explode("deg", $val);
-          $v1 = intval($p1[0]) . "/1";
-          $p2 = explode("'", $p1[1]);
-          $v2 = intval($p2[0]) . "/1";
-
-          $p3 = explode("\"", $p2[1]);
-          $v3 = intval($p3[0] * 10000) . "/10000";
-
-	  $exif[$name] = array($v1, $v2, $v3);
-	}
-        else if($name === "GPSLatitudeRef" or $name === "GPSLongitudeRef")
-	{
-          $exif[$name] = substr($val, 0, 1);
+        if ($name === "GPSLatitude" or $name === "GPSLongitude")
+        {
+          $parsed = eg_parse_coordinate($val);
+          if ($parsed !== null)
+          {
+            $exif[$name] = $parsed;
+          }
         }
-	else
-	{
+        else if ($name === "GPSLatitudeRef" or $name === "GPSLongitudeRef")
+        {
+          if (is_string($val) && strlen($val) > 0)
+          {
+            $exif[$name] = substr($val, 0, 1);
+          }
+        }
+        else
+        {
           $exif[$name] = $val;
-	}
+        }
       }
     }
   }
